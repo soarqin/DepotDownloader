@@ -89,7 +89,7 @@ namespace DepotDownloader
 
         public delegate bool WaitCondition();
 
-        private readonly Lock steamLock = new();
+        private readonly object steamLock = new();
 
         public bool WaitUntilCallback(Action submitter, WaitCondition waiter)
         {
@@ -164,6 +164,11 @@ namespace DepotDownloader
                 request.AccessToken = token;
             }
 
+            if (ContentDownloader.Config.UseAppToken)
+            {
+                request.AccessToken = ContentDownloader.Config.AppToken;
+            }
+
             var appInfoMultiple = await steamApps.PICSGetProductInfo([request], []);
 
             foreach (var appInfo in appInfoMultiple.Results)
@@ -200,6 +205,11 @@ namespace DepotDownloader
                 if (PackageTokens.TryGetValue(package, out var token))
                 {
                     request.AccessToken = token;
+                }
+
+                if (ContentDownloader.Config.UsePackageToken)
+                {
+                    request.AccessToken = ContentDownloader.Config.PackageToken;
                 }
 
                 packageRequests.Add(request);
@@ -265,7 +275,6 @@ namespace DepotDownloader
             if (requestCode == 0)
             {
                 Console.WriteLine($"No manifest request code was returned for depot {depotId} from app {appId}, manifest {manifestId}");
-
                 if (!authenticatedUser)
                 {
                     Console.WriteLine("Suggestion: Try logging in with -username as old manifests may not be available for anonymous accounts.");
@@ -323,6 +332,11 @@ namespace DepotDownloader
             }
 
             AppTokens.TryGetValue(appid, out var accessToken); // Should be filled by RequestAppInfo
+
+            if (ContentDownloader.Config.UseAppToken)
+            {
+                accessToken = ContentDownloader.Config.AppToken;
+            }
 
             var privateBeta = await steamApps.PICSGetPrivateBeta(appid, accessToken, branch, branchPassword);
 

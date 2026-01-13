@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using SteamKit2;
@@ -66,6 +67,13 @@ namespace DepotDownloader
 
             var username = GetParameter<string>(args, "-username") ?? GetParameter<string>(args, "-user");
             var password = GetParameter<string>(args, "-password") ?? GetParameter<string>(args, "-pass");
+
+            ContentDownloader.Config.UseManifestHub = HasParameter(args, "-use-manifesthub");
+            ContentDownloader.Config.UseAppToken = HasParameter(args, "-apptoken");
+            ContentDownloader.Config.UsePackageToken = HasParameter(args, "-packagetoken");
+            ContentDownloader.Config.AppToken = Convert.ToUInt64(GetParameter<string>(args, "-apptoken"));
+            ContentDownloader.Config.PackageToken = Convert.ToUInt64(GetParameter<string>(args, "-packagetoken"));
+
             ContentDownloader.Config.RememberPassword = HasParameter(args, "-remember-password");
             ContentDownloader.Config.UseQrCode = HasParameter(args, "-qr");
             ContentDownloader.Config.SkipAppConfirmation = HasParameter(args, "-no-mobile");
@@ -77,6 +85,7 @@ namespace DepotDownloader
                     Console.WriteLine("Error: -remember-password can not be used without -username or -qr.");
                     return 1;
                 }
+                ContentDownloader.Config.UseManifestHub = true;
             }
             else if (ContentDownloader.Config.UseQrCode)
             {
@@ -134,6 +143,25 @@ namespace DepotDownloader
                 }
             }
 
+            var depotKeysList = GetParameter<string>(args, "-depotkeys");
+
+            if (depotKeysList != null)
+            {
+                try
+                {
+                    var depotKeysListData = File.ReadAllText(depotKeysList);
+                    var lines = depotKeysListData.Split(new char[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    DepotKeyStore.AddAll(lines);
+
+                    Console.WriteLine("Using depot keys from '{0}'.", depotKeysList);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Warning: Unable to load filelist: {0}", ex.ToString());
+                }
+            }
+
             ContentDownloader.Config.InstallDirectory = GetParameter<string>(args, "-dir");
 
             ContentDownloader.Config.VerifyAll = HasParameter(args, "-verify-all") || HasParameter(args, "-verify_all") || HasParameter(args, "-validate");
@@ -156,6 +184,21 @@ namespace DepotDownloader
 
             ContentDownloader.Config.MaxDownloads = GetParameter(args, "-max-downloads", 8);
             ContentDownloader.Config.LoginID = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null;
+            var manifestFiles = GetParameterList<string>(args, "-manifestfile");
+            if (manifestFiles != null && manifestFiles.Count > 0)
+            {
+                foreach (var manifestFile in manifestFiles)
+                {
+                    var manifest = DepotManifest.LoadFromFile(manifestFile);
+                    if (manifest == null)
+                    {
+                        Console.WriteLine("Error: Unable to load manifest file: {0}", manifestFile);
+                        return 1;
+                    }
+                    ContentDownloader.Config.ManifestFileContent.Add(manifest.DepotID, manifest);
+                }
+                ContentDownloader.Config.UseManifestHub = false;
+            }
 
             #endregion
 
@@ -305,6 +348,12 @@ namespace DepotDownloader
                 else
                 {
                     depotManifestIds.AddRange(depotIdList.Select(depotId => (depotId, ContentDownloader.INVALID_MANIFEST_ID)));
+                }
+
+                if (ContentDownloader.Config.UseManifestHub)
+                {
+                    var depotManifestIdsDict = depotManifestIds.ToDictionary(x => x.Item1, x => x.Item2);
+                    _ = await FetchRequiredKeysAndManifests(appId, depotManifestIdsDict);
                 }
 
                 PrintUnconsumedArgs(args);
@@ -501,6 +550,14 @@ namespace DepotDownloader
             Console.WriteLine("  -manifest <id>           - manifest id of content to download (requires -depot, default: current for branch).");
             Console.WriteLine($"  -branch <branchname>    - download from specified branch if available (default: {ContentDownloader.DEFAULT_BRANCH}).");
             Console.WriteLine("  -branchpassword <pass>   - branch password if applicable.");
+            Console.WriteLine();
+            Console.WriteLine("  -use-manifesthub         - Use SSMGAlt/ManifestHub2 to download depot keys and manifest files.");
+            Console.WriteLine("                             This is enabled by default when you login as anonymous Account.");
+            Console.WriteLine("  -depotkeys <file>        - a list of depot keys to use ('depotID;hexKey' per line).");
+            Console.WriteLine("  -manifestfile <file>     - Use Specified Manifest file from Steam.");
+            Console.WriteLine("  -apptoken <#>            - Use Specified App Access Token.");
+            Console.WriteLine("  -packagetoken <#>        - Use Specified Package Access Token.");
+            Console.WriteLine();
             Console.WriteLine("  -all-platforms           - downloads all platform-specific depots when -app is used.");
             Console.WriteLine("  -all-archs               - download all architecture-specific depots when -app is used.");
             Console.WriteLine("  -os <os>                 - the operating system for which to download the game (windows, macos or linux, default: OS the program is currently running on)");
@@ -545,6 +602,78 @@ namespace DepotDownloader
             }
 
             Console.WriteLine($"Runtime: {RuntimeInformation.FrameworkDescription} on {RuntimeInformation.OSDescription}");
+        }
+
+        static async Task<bool> FetchRequiredKeysAndManifests(uint appId, Dictionary<uint, ulong> depotIdList, bool isDLC = false, HashSet<uint> visitedApps = null)
+        {
+            var httpClient = HttpClientFactory.CreateHttpClient();
+            var response = await httpClient.GetAsync($"https://github.com/SSMGAlt/ManifestHub2/raw/refs/heads/{appId}/{appId}.json");
+            if (!response.IsSuccessStatusCode)
+            {
+                if (!isDLC) Console.WriteLine("Error: Failed to fetch required keys and manifests for app {0}: {1}", appId, response.StatusCode);
+                return false;
+            }
+
+            var content = await response.Content.ReadAsStringAsync();
+            response.Dispose();
+            var j = JsonDocument.Parse(content);
+            var depots = j.RootElement.GetProperty("depot");
+            var depotListEmpty = depotIdList.Count == 0;
+            foreach (var p in depots.EnumerateObject())
+            {
+                if (p.Value.ValueKind != JsonValueKind.Object) continue;
+                if (!uint.TryParse(p.Name, out var depotId)) continue;
+                var targetManfestId = ContentDownloader.INVALID_MANIFEST_ID;
+                if ((!depotListEmpty && !depotIdList.TryGetValue(depotId, out targetManfestId)) || ContentDownloader.Config.ManifestFileContent.ContainsKey(depotId)) continue;
+                if (p.Value.TryGetProperty("dlcappid", out var dlcAppId))
+                {
+                    if (dlcAppId.ValueKind == JsonValueKind.String)
+                    {
+                        var dlcAppIdValue = uint.Parse(dlcAppId.GetString());
+                        if (visitedApps == null || !visitedApps.Contains(dlcAppIdValue)) // Prevent infinite recursion
+                        {
+                            visitedApps ??= [];
+                            visitedApps.Add(dlcAppIdValue);
+                            if (await FetchRequiredKeysAndManifests(dlcAppIdValue, depotIdList, true, visitedApps)) continue;
+                        }
+                    }
+                }
+                if (!p.Value.TryGetProperty("manifests", out var manifests)) continue;
+                if (manifests.ValueKind != JsonValueKind.Object) continue;
+                if (!manifests.TryGetProperty("public", out var pub)) continue;
+                if (pub.ValueKind != JsonValueKind.Object) continue;
+                if (!pub.TryGetProperty("gid", out var gid)) continue;
+                if (gid.ValueKind != JsonValueKind.String) continue;
+                var gidValue = gid.GetString();
+                if (gidValue == null) continue;
+                if (!p.Value.TryGetProperty("decryptionkey", out var decryptionkey)) continue;
+                if (decryptionkey.ValueKind != JsonValueKind.String) continue;
+                var decryptionkeyValue = decryptionkey.GetString();
+                if (decryptionkeyValue == null) continue;
+                if (targetManfestId != ContentDownloader.INVALID_MANIFEST_ID && targetManfestId != ulong.Parse(gidValue))
+                {
+                    Console.WriteLine("WARNING: Manifest GID for depot {0} is different from the target manifest GID {1}, but we will continue to download the key and manifest", depotId, targetManfestId);
+                }
+                DepotKeyStore.Add(depotId, decryptionkeyValue);
+                Console.WriteLine("Downloaded key for depot {0}: {1}", depotId, decryptionkeyValue);
+                var response2 = await httpClient.GetAsync($"https://github.com/SSMGAlt/ManifestHub2/raw/refs/heads/{appId}/{depotId}_{gidValue}.manifest");
+                if (!response2.IsSuccessStatusCode)
+                {
+                    Console.WriteLine("Error: Failed to fetch manifest {1} for depot {0}: {2}", depotId, gidValue, response2.StatusCode);
+                    continue;
+                }
+                var content2 = await response2.Content.ReadAsStreamAsync();
+                var manifest = DepotManifest.Deserialize(content2);
+                if (manifest == null)
+                {
+                    Console.WriteLine("Error: Failed to deserialize manifest {1} for depot {0}: {2}", depotId, gidValue, response2.StatusCode);
+                    continue;
+                }
+                ContentDownloader.Config.ManifestFileContent.Add(depotId, manifest);
+                Console.WriteLine("Downloaded manifest for depot {0}: {1}", depotId, manifest.ManifestGID);
+            }
+            j.Dispose();
+            return true;
         }
     }
 }

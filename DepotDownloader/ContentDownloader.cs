@@ -186,6 +186,7 @@ namespace DepotDownloader
 
 
             var depots = GetSteam3AppSection(appId, EAppInfoSection.Depots);
+            if (depots == null) return 0; // Mod for force download
             var branches = depots["branches"];
             var node = branches[branch];
 
@@ -203,6 +204,7 @@ namespace DepotDownloader
         static uint GetSteam3DepotProxyAppId(uint depotId, uint appId)
         {
             var depots = GetSteam3AppSection(appId, EAppInfoSection.Depots);
+            if (depots == null) return INVALID_APP_ID; // Mod for force download
             var depotChild = depots[depotId.ToString()];
 
             if (depotChild == KeyValue.Invalid)
@@ -476,11 +478,13 @@ namespace DepotDownloader
                     // Fetch app info again in case we didn't get it fully without a license.
                     await steam3.RequestAppInfo(appId, true);
                 }
+                /* Mod for force download
                 else
                 {
                     var contentName = GetAppName(appId);
                     throw new ContentDownloaderException(string.Format("App {0} ({1}) is not available from this account.", appId, contentName));
                 }
+                 */
             }
 
             var hasSpecificDepots = depotManifestIds.Count > 0;
@@ -494,7 +498,7 @@ namespace DepotDownloader
                 if (workshopDepot != 0 && !depotIdsExpected.Contains(workshopDepot))
                 {
                     depotIdsExpected.Add(workshopDepot);
-                    depotManifestIds = depotManifestIds.Select(pair => (workshopDepot, pair.manifestId)).ToList();
+                    depotManifestIds = [.. depotManifestIds.Select(pair => (workshopDepot, pair.manifestId))];
                 }
 
                 depotIdsFound.AddRange(depotIdsExpected);
@@ -568,11 +572,13 @@ namespace DepotDownloader
                     throw new ContentDownloaderException(string.Format("Couldn't find any depots to download for app {0}", appId));
                 }
 
+                /* Mod for force download
                 if (depotIdsFound.Count < depotIdsExpected.Count)
                 {
                     var remainingDepotIds = depotIdsExpected.Except(depotIdsFound);
                     throw new ContentDownloaderException(string.Format("Depot {0} not listed for app {1}", string.Join(", ", remainingDepotIds), appId));
                 }
+                 */
             }
 
             var infos = new List<DepotDownloadInfo>();
@@ -605,14 +611,14 @@ namespace DepotDownloader
             {
                 await steam3.RequestAppInfo(appId);
             }
-
+            /*
             if (!await AccountHasAccess(appId, depotId))
             {
                 Console.WriteLine("Depot {0} is not available from this account.", depotId);
 
                 return null;
             }
-
+            */
             if (manifestId == INVALID_MANIFEST_ID)
             {
                 manifestId = await GetSteam3DepotManifest(depotId, appId, branch);
@@ -633,8 +639,15 @@ namespace DepotDownloader
             await steam3.RequestDepotKey(depotId, appId);
             if (!steam3.DepotKeys.TryGetValue(depotId, out var depotKey))
             {
-                Console.WriteLine("No valid depot key for {0}, unable to download.", depotId);
-                return null;
+                if (DepotKeyStore.TryGetValue(depotId, out depotKey))
+                {
+                    steam3.DepotKeys.Add(depotId, depotKey);
+                }
+                else
+                {
+                    Console.WriteLine("No valid depot key for {0}, unable to download.", depotId);
+                    return null;
+                }
             }
 
             var uVersion = GetSteam3AppBuildNumber(appId, branch);
@@ -772,6 +785,20 @@ namespace DepotDownloader
                 // We only have to show this warning if the old manifest ID was different
                 var badHashWarning = (lastManifestId != depot.ManifestId);
                 oldManifest = Util.LoadManifestFromFile(configDir, depot.DepotId, lastManifestId, badHashWarning);
+            }
+
+            if (Config.ManifestFileContent.TryGetValue(depot.DepotId, out var manifest))
+            {
+                lastManifestId = depot.ManifestId;
+                oldManifest = manifest;
+                if (oldManifest.FilenamesEncrypted)
+                {
+                    if (!oldManifest.DecryptFilenames(depot.DepotKey))
+                    {
+                        Console.WriteLine("Failed to decrypt filenames in manifest file.");
+                        return null;
+                    }
+                }
             }
 
             if (lastManifestId == depot.ManifestId && oldManifest != null)

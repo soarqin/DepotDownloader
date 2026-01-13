@@ -1,5 +1,4 @@
-DepotDownloader
-===============
+# DepotDownloader
 
 Steam depot downloader utilizing the SteamKit2 library. Supports .NET 8.0
 
@@ -33,6 +32,7 @@ brew install depotdownloader
 ## Usage
 
 ### Downloading one or all depots for an app
+
 ```powershell
 ./DepotDownloader -app <id> [-depot <id> [-manifest <id>]]
                  [-username <username> [-password <password>]] [other options]
@@ -46,6 +46,7 @@ To use your account, specify the `-username <username>` parameter. Password will
 not use specify the `-password` parameter.
 
 ### Downloading a workshop item using pubfile id
+
 ```powershell
 ./DepotDownloader -app <id> -pubfile <id> [-username <username> [-password <password>]]
 ```
@@ -53,6 +54,7 @@ not use specify the `-password` parameter.
 For example: `./DepotDownloader -app 730 -pubfile 1885082371`
 
 ### Downloading a workshop item using ugc id
+
 ```powershell
 ./DepotDownloader -app <id> -ugc <id> [-username <username> [-password <password>]]
 ```
@@ -61,7 +63,7 @@ For example: `./DepotDownloader -app 730 -ugc 770604181014286929`
 
 ## Parameters
 
-#### Authentication
+### Authentication
 
 Parameter               | Description
 ----------------------- | -----------
@@ -72,7 +74,7 @@ Parameter               | Description
 `-no-mobile`            | prefer entering a 2FA code instead of prompting to accept in the Steam mobile app.
 `-loginid <#>`          | a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.
 
-#### Downloading
+### Downloading
 
 Parameter                | Description
 ------------------------ | -----------
@@ -83,8 +85,13 @@ Parameter                | Description
 `-pubfile <#>`           | the PublishedFileId to download. (Will automatically resolve to UGC id)
 `-branch <branchname>`   | download from specified branch if available (default: Public).
 `-branchpassword <pass>` | branch password if applicable.
+`-use-manifesthub`       | Use SteamAutoCracks/ManifestHub to download depot keys and manifest files. This is enabled by default when you login as anonymous Account.
+`-depotkeys <file>`      | a list of depot keys to use ('depotID;hexKey' per line).
+`-manifestfile <file>`   | Use Specified Manifest file from Steam.
+`-apptoken <#>`          | Use Specified App Access Token.
+`-packagetoken <#>`      | Use Specified Package Access Token.
 
-#### Download configuration
+### Download configuration
 
 Parameter               | Description
 ----------------------- | -----------
@@ -103,7 +110,7 @@ Parameter               | Description
 `-max-downloads <#>`    | maximum number of chunks to download concurrently. (default: 8).
 `-use-lancache`         | forces downloads over the local network via a Lancache instance.
 
-#### Other
+### Other
 
 Parameter               | Description
 ----------------------- | -----------
@@ -113,19 +120,24 @@ Parameter               | Description
 ## Frequently Asked Questions
 
 ### Why am I prompted to enter a 2-factor code every time I run the app?
+
 Your 2-factor code authenticates a Steam session. You need to "remember" your session with `-remember-password` which persists the login key for your Steam session.
 
 ### Can I run DepotDownloader while an account is already connected to Steam?
+
 Any connection to Steam will be closed if they share a LoginID. You can specify a different LoginID with `-loginid`.
 
 ### Why doesn't my password containing special characters work? Do I have to specify the password on the command line?
+
 If you pass the `-password` parameter with a password that contains special characters, you will need to escape the command appropriately for the shell you are using. You do not have to include the `-password` parameter on the command line as long as you include a `-username`. You will be prompted to enter your password interactively.
 
 ### I am getting error 401 or no manifest code returned for old manifest ids
+
 Try logging in with a Steam account, this may happen when using anonymous account.
 
 Steam allows developers to block downloading old manifests, in which case no manifest code is returned even when parameters appear correct.
 
 ### Why am I getting slow download speeds and frequent connection timeouts?
+
 When downloading old builds, cache server may not have the chunks readily available which makes downloading slower.
 Try increasing `-max-downloads` to saturate the network more.

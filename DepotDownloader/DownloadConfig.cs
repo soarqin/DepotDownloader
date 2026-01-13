@@ -1,8 +1,9 @@
-﻿// This file is subject to the terms and conditions defined
+// This file is subject to the terms and conditions defined
 // in file 'LICENSE', which is part of this source code package.
 
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using SteamKit2;
 
 namespace DepotDownloader
 {
@@ -32,5 +33,17 @@ namespace DepotDownloader
 
         public bool UseQrCode { get; set; }
         public bool SkipAppConfirmation { get; set; }
+
+        // Mod to use SSMGAlt/ManifestHub2 to download depot keys and manifest files
+        public bool UseManifestHub { get; set; }
+
+        // Mod to force download
+        public Dictionary<uint, DepotManifest> ManifestFileContent { get; } = [];
+
+        public bool UseAppToken { get; set; }
+        public bool UsePackageToken { get; set; }
+        public ulong AppToken { get; set; }
+        public ulong PackageToken { get; set; }
+
     }
 }
